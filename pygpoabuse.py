@@ -39,6 +39,8 @@ parser.add_argument('-ldaps', action='store_true', help='Use LDAPS instead of LD
 parser.add_argument('-ccache', action='store', help='ccache file name (must be in local directory)')
 parser.add_argument('-f', action='store_true', help='Force add ScheduleTask')
 parser.add_argument('-v', action='count', default=0, help='Verbosity level (-v or -vv)')
+parser.add_argument('-rollback', action='store_true', 
+                   help='Roll back changes by removing the specified task')
 
 if len(sys.argv) == 1:
     parser.print_help()
@@ -116,25 +118,54 @@ except Exception as e:
     logging.error("SMB connection error", exc_info=True)
     sys.exit(1)
 
-try:
-    gpo = GPO(smb_session)
-    task_name = gpo.update_scheduled_task(
-        domain=domain,
-        gpo_id=options.gpo_id,
-        name=options.taskname,
-        mod_date=options.mod_date,
-        description=options.description,
-        powershell=options.powershell,
-        command=options.command,
-        gpo_type="user" if options.user else "computer",
-        force=options.f
-    )
-    if task_name:
-        if gpo.update_versions(url, domain, options.gpo_id, gpo_type="user" if options.user else "computer",):
-            logging.info("Version updated")
+if options.rollback:
+    if not options.taskname:
+        logging.error("Task name must be specified for rollback with -taskname")
+        sys.exit(1)
+        
+    try:
+        gpo = GPO(smb_session)
+        success = gpo.remove_scheduled_task(
+            domain=domain,
+            gpo_id=options.gpo_id,
+            name=options.taskname,
+            gpo_type="user" if options.user else "computer"
+        )
+        
+        if success:
+            # Update the version numbers
+            if gpo.update_versions(url, domain, options.gpo_id, gpo_type="user" if options.user else "computer"):
+                logging.info("Version updated")
+                logging.success(f"Successfully removed task {options.taskname}")
+            else:
+                logging.error("Error while updating versions")
+                sys.exit(1)
         else:
-            logging.error("Error while updating versions")
+            logging.error("Failed to remove scheduled task")
             sys.exit(1)
-        logging.success("ScheduledTask {} created!".format(task_name))
-except Exception as e:
-    logging.error("An error occurred. Use -vv for more details", exc_info=True)
+    except Exception as e:
+        logging.error("An error occurred during rollback. Use -vv for more details", exc_info=True)
+        sys.exit(1)
+else:
+    try:
+        gpo = GPO(smb_session)
+        task_name = gpo.update_scheduled_task(
+            domain=domain,
+            gpo_id=options.gpo_id,
+            name=options.taskname,
+            mod_date=options.mod_date,
+            description=options.description,
+            powershell=options.powershell,
+            command=options.command,
+            gpo_type="user" if options.user else "computer",
+            force=options.f
+        )
+        if task_name:
+            if gpo.update_versions(url, domain, options.gpo_id, gpo_type="user" if options.user else "computer",):
+                logging.info("Version updated")
+            else:
+                logging.error("Error while updating versions")
+                sys.exit(1)
+            logging.success("ScheduledTask {} created!".format(task_name))
+    except Exception as e:
+        logging.error("An error occurred. Use -vv for more details", exc_info=True)
