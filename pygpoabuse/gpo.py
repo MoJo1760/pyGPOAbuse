@@ -214,3 +214,60 @@ class GPO:
             return False
         self._smb_session.closeFile(tid, fid)
         return st.get_name()
+
+    def remove_scheduled_task(self, domain, gpo_id, name, gpo_type="computer"):
+        """
+        Remove a scheduled task from the GPO
+        """
+        try:
+            tid = self._smb_session.connectTree("SYSVOL")
+            logging.debug("Connected to SYSVOL")
+        except:
+            logging.error("Unable to connect to SYSVOL share", exc_info=True)
+            return False
+
+        path = domain + "/Policies/{" + gpo_id + "}/"
+
+        try:
+            self._smb_session.listPath("SYSVOL", path)
+            logging.debug("GPO id {} exists".format(gpo_id))
+        except:
+            logging.error("GPO id {} does not exist".format(gpo_id), exc_info=True)
+            return False
+
+        if gpo_type == "computer":
+            root_path = "Machine"
+        else:
+            root_path = "User"
+
+        path += "{}/Preferences/ScheduledTasks/ScheduledTasks.xml".format(root_path)
+
+        try:
+            # Read the current scheduled tasks XML
+            fid = self._smb_session.openFile(tid, path)
+            st_content = self._smb_session.readFile(tid, fid, singleCall=False).decode("utf-8")
+            
+            # Use regex to find and remove the task with the specified name
+            import re
+            
+            # Look for task XML tags with the specified name attribute
+            pattern = r'<ImmediateTaskV2[^>]*name="' + re.escape(name) + r'"[^>]*>.*?</ImmediateTaskV2>'
+            new_content = re.sub(pattern, '', st_content, flags=re.DOTALL)
+            
+            # If the content changed, the task was found and removed
+            if new_content != st_content:
+                # Clean up the XML if needed
+                if '<ImmediateTaskV2' not in new_content:
+                    new_content = '<?xml version="1.0" encoding="utf-8"?><ScheduledTasks clsid="{CC63F200-7309-4ba0-B154-A71CD118DBCC}"></ScheduledTasks>'
+                
+                # Write back to file
+                self._smb_session.writeFile(tid, fid, new_content)
+                self._smb_session.closeFile(tid, fid)
+                return True
+            else:
+                logging.error(f"Could not find task with name {name}")
+                self._smb_session.closeFile(tid, fid)
+                return False
+        except Exception as e:
+            logging.error(f"Error removing scheduled task: {str(e)}", exc_info=True)
+            return False
